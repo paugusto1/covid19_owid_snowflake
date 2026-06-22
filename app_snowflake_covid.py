@@ -1,23 +1,20 @@
 """
-APP STREAMLIT + SNOWFLAKE - DASHBOARD COVID-19 (OWID EXCLUSIVE)
-Integração de dados OWID e carga no Snowflake
-Desenvolvido para Demonstração de Pipelines de Dados
+APP STREAMLIT + SNOWFLAKE - DASHBOARD COVID-19 (TOP 10 POPULOUS COUNTRIES)
+Visualização de dados OWID diretamente do Snowflake Cloud Data Warehouse
 """
 
 import streamlit as st
 import pandas as pd
 import plotly.express as px
 import snowflake.connector
-from snowflake.connector.pandas_tools import write_pandas
 from datetime import datetime
-import re
 
 # ============================================================================
 # CONFIGURAÇÃO DA PÁGINA
 # ============================================================================
 
 st.set_page_config(
-    page_title="COVID-19 OWID Snowflake",
+    page_title="COVID-19 Top 10 Populous Nations",
     page_icon="🦠",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -37,24 +34,22 @@ st.markdown("""
         color: #4B5563;
         margin-bottom: 1.5rem;
     }
-    .kpi-card {
-        background-color: #F3F4F6;
-        border-radius: 8px;
-        padding: 1rem;
-        border-left: 5px solid #3B82F6;
+    .kpi-title {
+        font-size: 0.9rem;
+        color: #6B7280;
+        font-weight: 500;
+        text-transform: uppercase;
     }
-    .sync-card {
-        background-color: #EFF6FF;
-        border: 1px solid #BFDBFE;
-        border-radius: 8px;
-        padding: 1rem;
-        margin-bottom: 1.5rem;
+    .kpi-value {
+        font-size: 1.8rem;
+        color: #1E3A8A;
+        font-weight: bold;
     }
 </style>
 """, unsafe_allow_html=True)
 
 # ============================================================================
-# FUNÇÕES DE CONEXÃO E BANCO DE DADOS
+# FUNÇÕES DE CONEXÃO E LEITURA DO BANCO DE DADOS
 # ============================================================================
 
 @st.cache_resource
@@ -67,299 +62,237 @@ def get_snowflake_connection():
         warehouse=st.secrets["snowflake"]["warehouse"],
         database=st.secrets["snowflake"]["database"],
         schema=st.secrets["snowflake"]["schema"],
-        role=st.secrets["snowflake"]["role"]
+        role=st.secrets["snowflake"]["role"],
+        ocsp_fail_open=True  # Essencial para contornar problemas de firewall/validação OCSP
     )
 
-def setup_writable_db():
-    """Garante a existência do banco de dados COVID19_DB e esquema PUBLIC para escrita"""
-    conn = get_snowflake_connection()
-    cur = conn.cursor()
-    try:
-        cur.execute("CREATE DATABASE IF NOT EXISTS COVID19_DB")
-        cur.execute("USE DATABASE COVID19_DB")
-        cur.execute("CREATE SCHEMA IF NOT EXISTS PUBLIC")
-        cur.execute("USE SCHEMA PUBLIC")
-        conn.commit()
-    finally:
-        cur.close()
-
-def clean_column_names(df):
-    """Limpa e formata os nomes das colunas para compatibilidade ideal com o Snowflake"""
-    df_cleaned = df.copy()
-    new_cols = []
-    for col in df_cleaned.columns:
-        cleaned = re.sub(r'[^a-zA-Z0-9]', '_', col.upper())
-        cleaned = re.sub(r'_+', '_', cleaned).strip('_')
-        new_cols.append(cleaned)
-    df_cleaned.columns = new_cols
-    return df_cleaned
-
-def upload_data_to_snowflake():
-    """Lê o arquivo CSV local do OWID do main.py e faz o upload para o Snowflake"""
-    setup_writable_db() # Cria COVID19_DB e PUBLIC
-    
-    conn = get_snowflake_connection()
-    status_messages = []
-    
-    # Arquivo: covid19_owid_snowflake.csv
-    try:
-        owid_csv = "covid19_owid_snowflake.csv"
-        df_owid = pd.read_csv(owid_csv)
-        
-        df_owid_clean = clean_column_names(df_owid)
-        
-        # Enviar ao Snowflake (COVID19_DB.PUBLIC.COVID19_OWID_SNOWFLAKE)
-        success, nchunks, nrows, _ = write_pandas(
-            conn=conn,
-            df=df_owid_clean,
-            table_name="COVID19_OWID_SNOWFLAKE",
-            database="COVID19_DB",
-            schema="PUBLIC",
-            auto_create_table=True,
-            overwrite=True
-        )
-        if success:
-            status_messages.append(f"✅ Tabela COVID19_OWID_SNOWFLAKE carregada com {nrows} linhas!")
-        else:
-            status_messages.append("❌ Erro no upload da tabela histórica OWID.")
-            
-    except Exception as e:
-        status_messages.append(f"❌ Erro ao processar dados históricos OWID: {str(e)}")
-        
-    return status_messages
-
 @st.cache_data(ttl=300)
-def run_query_from_db(query, database="COVID19_DB", schema="PUBLIC"):
-    """Executa queries de consulta no banco de dados especificado"""
+def load_all_data_from_snowflake():
+    """Busca a série histórica completa de COVID19_OWID_SNOWFLAKE no Snowflake"""
     conn = get_snowflake_connection()
     cur = conn.cursor()
     try:
-        cur.execute(f"USE DATABASE {database}")
-        cur.execute(f"USE SCHEMA {schema}")
-        cur.execute(query)
+        cur.execute("USE DATABASE COVID19_DB")
+        cur.execute("USE SCHEMA PUBLIC")
+        cur.execute("SELECT * FROM COVID19_OWID_SNOWFLAKE ORDER BY DATE ASC")
         df = cur.fetch_pandas_all()
+        
+        # Converter coluna DATE para datetime e ordenar
+        df['DATE'] = pd.to_datetime(df['DATE'])
         return df
     finally:
         cur.close()
 
 # ============================================================================
-# INTERFACE PRINCIPAL
+# TÍTULO E SUBTÍTULO
 # ============================================================================
 
-st.markdown('<div class="main-header">🦠 COVID-19 Snowflake Analytics</div>', unsafe_allow_html=True)
-st.markdown('<div class="sub-header">Carga de Dados, Armazenamento Seguro e Business Intelligence com Snowflake Cloud Data Warehouse (Dataset OWID)</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-header">🦠 Painel COVID-19: Top 10 Nações Mais Populosas</div>', unsafe_allow_html=True)
+st.markdown('<div class="sub-header">Análise Analítica de Impacto e Vacinação (2020-2023) consumindo diretamente do Snowflake Data Warehouse</div>', unsafe_allow_html=True)
 
 # ============================================================================
-# SIDEBAR - CONTROLE E CONEXÃO
+# CONEXÃO E CARGA DE DADOS
 # ============================================================================
 
-with st.sidebar:
-    st.header("⚙️ Controle e Conexão")
-    
-    # Exibir credenciais (segura)
-    try:
-        conn_test = get_snowflake_connection()
-        cur_test = conn_test.cursor()
-        cur_test.execute("SELECT CURRENT_VERSION()")
-        version = cur_test.fetchone()[0]
-        cur_test.close()
-        conn_test.close()
-        
-        st.success("✅ Conectado ao Snowflake!")
-        with st.expander("ℹ️ Detalhes da Sessão"):
-            st.code(f"""
-Conta: {st.secrets["snowflake"]["account"]}
-User: {st.secrets["snowflake"]["user"]}
-Role: {st.secrets["snowflake"]["role"]}
-Versão: {version}
-            """)
-    except Exception as e:
-        st.error(f"❌ Erro de Conexão: {str(e)}")
-        st.info("Verifique se as credenciais no secrets.toml estão corretas.")
-        st.stop()
-        
-    st.markdown("---")
-    
-    # Card de Sincronização de Dados
-    st.markdown('<div class="sync-card">', unsafe_allow_html=True)
-    st.markdown("### 🔄 Sincronização Snowflake")
-    st.markdown("Envia os resultados do dataset OWID do `main.py` diretamente para o Snowflake.")
-    
-    if st.button("🚀 Enviar Resultados para o Snowflake", use_container_width=True):
-        with st.spinner("Conectando, criando tabela e inserindo dados de COVID-19..."):
-            status_logs = upload_data_to_snowflake()
-            for log in status_logs:
-                if "✅" in log:
-                    st.toast(log, icon="✅")
-                else:
-                    st.toast(log, icon="❌")
-            st.success("Carga concluída!")
-            st.write(status_logs)
-            st.cache_data.clear()
-            
-    st.markdown('</div>', unsafe_allow_html=True)
-    
-    st.info("""
-    **Sobre o Pipeline:**
-    1. `main.py` coleta, filtra e gera o dataset OWID no CSV `covid19_owid_snowflake.csv` localmente.
-    2. Este app lê o CSV, limpa suas colunas e o envia ao Snowflake usando `write_pandas`.
-    3. Os dashboards consomem os dados diretamente do Snowflake.
-    """)
-
-# ============================================================================
-# VERIFICAR SE A TABELA EXISTE ANTES DE CARREGAR OS TABS
-# ============================================================================
-
-tables_ready = False
 try:
-    test_owid = run_query_from_db("SELECT COUNT(*) FROM COVID19_OWID_SNOWFLAKE")
-    tables_ready = True
-except Exception:
-    pass
-
-if not tables_ready:
-    st.warning("⚠️ Os dados do COVID-19 OWID ainda não foram enviados ao Snowflake.")
-    st.info("Por favor, clique no botão **🚀 Enviar Resultados para o Snowflake** na barra lateral esquerda para iniciar a carga de dados.")
-    
-    try:
-        st.subheader("Prévia local: Dados Históricos OWID")
-        df_preview_owid = pd.read_csv("covid19_owid_snowflake.csv").head(10)
-        st.dataframe(df_preview_owid, use_container_width=True)
-    except Exception as e:
-        st.error(f"Erro ao carregar prévia local: {e}. Certifique-se de rodar `python main.py` primeiro.")
+    with st.spinner("Conectando ao Snowflake e carregando base de dados de alto desempenho..."):
+        df_raw = load_all_data_from_snowflake()
+except Exception as e:
+    st.error(f"❌ Falha ao carregar dados do Snowflake: {str(e)}")
+    st.info("Verifique se as tabelas foram criadas rodando `python main.py` primeiro ou clicando em Sincronizar.")
     st.stop()
 
 # ============================================================================
-# TABS PRINCIPAIS DE NAVEGAÇÃO
+# SIDEBAR - CONTROLE E FILTRO INTERATIVO (OBRIGATÓRIO)
 # ============================================================================
 
-tab_dashboard, tab_explorer, tab_playground = st.tabs([
-    "📊 Dashboard Histórico (OWID)",
-    "❄️ Visualizador Snowflake",
-    "💻 SQL Playground"
+with st.sidebar:
+    st.header("⚙️ Filtros e Ajustes")
+    
+    # 1. FILTRO INTERATIVO OBRIGATÓRIO (Seleção de Países)
+    all_countries = sorted(list(df_raw['LOCATION'].unique()))
+    selected_countries = st.multiselect(
+        "Selecione os Países para Análise:",
+        options=all_countries,
+        default=all_countries,
+        help="Escolha um ou mais países. O painel e os gráficos serão recalculados automaticamente."
+    )
+    
+    # Filtro adicional de período opcional
+    st.subheader("🗓️ Filtro de Período")
+    min_date = df_raw['DATE'].min().to_pydatetime()
+    max_date = df_raw['DATE'].max().to_pydatetime()
+    
+    selected_period = st.slider(
+        "Selecione o Período Temporal:",
+        min_value=min_date,
+        max_value=max_date,
+        value=(min_date, max_date),
+        format="YYYY-MM-DD"
+    )
+    
+    st.markdown("---")
+    st.markdown("### ℹ️ Informações da Conexão")
+    st.success("✅ Conectado ao Snowflake Cloud!")
+    st.caption(f"Última consulta realizada às {datetime.now().strftime('%H:%M:%S')}")
+
+# ============================================================================
+# PROCESSAMENTO DOS DADOS FILTRADOS
+# ============================================================================
+
+if not selected_countries:
+    st.warning("⚠️ Por favor, selecione pelo menos um país na barra lateral para carregar os gráficos.")
+    st.stop()
+
+# Aplicando os filtros do usuário
+df_filtered = df_raw[
+    (df_raw['LOCATION'].isin(selected_countries)) &
+    (df_raw['DATE'] >= selected_period[0]) &
+    (df_raw['DATE'] <= selected_period[1])
+]
+
+# ============================================================================
+# SEÇÃO DE 3 KPIS OBRIGATÓRIOS (st.metric)
+# ============================================================================
+
+# Calculando os valores máximos cumulativos por país selecionado no período selecionado
+df_kpis = df_filtered.groupby('LOCATION').agg({
+    'TOTAL_CASES': 'max',
+    'TOTAL_DEATHS': 'max',
+    'PEOPLE_VACCINATED': 'max'
+}).reset_index()
+
+total_cases = df_kpis['TOTAL_CASES'].sum()
+total_deaths = df_kpis['TOTAL_DEATHS'].sum()
+total_vacc = df_kpis['PEOPLE_VACCINATED'].sum()
+
+st.markdown("### 📌 Métricas Consolidadas do Período Selecionado")
+col_kpi1, col_kpi2, col_kpi3 = st.columns(3)
+
+with col_kpi1:
+    st.metric(
+        label="Total de Casos Confirmados", 
+        value=f"{total_cases:,.0f}" if pd.notna(total_cases) else "0"
+    )
+
+with col_kpi2:
+    st.metric(
+        label="Total de Óbitos Confirmados", 
+        value=f"{total_deaths:,.0f}" if pd.notna(total_deaths) else "0",
+        delta=f"Mortalidade Média: {(total_deaths/total_cases)*100:.2f}%" if total_cases > 0 else "0.00%",
+        delta_color="inverse"
+    )
+
+with col_kpi3:
+    st.metric(
+        label="Total de Vacinados (Mín. 1 dose)", 
+        value=f"{total_vacc:,.0f}" if pd.notna(total_vacc) else "0"
+    )
+
+st.markdown("---")
+
+# ============================================================================
+# TABS PRINCIPAIS - DASHBOARD E DADOS BRUTOS
+# ============================================================================
+
+tab_dashboard, tab_raw_data = st.tabs([
+    "📊 Dashboard Geral (Visualizações)",
+    "📂 Dados Brutos & Exportação"
 ])
 
 # ----------------------------------------------------------------------------
-# TAB 1: DASHBOARD HISTÓRICO (OWID)
+# TAB 1: DASHBOARD GERAL - 4 VISUALIZAÇÕES OBRIGATÓRIAS
 # ----------------------------------------------------------------------------
 with tab_dashboard:
-    st.header("📈 Evolução Histórica Temporal (Our World in Data)")
-    st.markdown("Análise comparativa temporal de COVID-19 (2020-2023) obtida diretamente do Snowflake.")
     
-    # Buscar série temporal
-    df_owid = run_query_from_db("SELECT * FROM COVID19_OWID_SNOWFLAKE ORDER BY DATE ASC")
-    df_owid['DATE'] = pd.to_datetime(df_owid['DATE'])
+    # Primeira linha de gráficos
+    row1_col1, row1_col2 = st.columns(2)
     
-    # Seleção de Países
-    available_locations = list(df_owid['LOCATION'].unique())
-    selected_locations = st.multiselect(
-        "Selecione os Países para Comparação:",
-        options=available_locations,
-        default=available_locations
-    )
-    
-    # Seleção de Métrica
-    metrics_map = {
-        "NEW_CASES": "Novos Casos Diários",
-        "TOTAL_DEATHS": "Óbitos Acumulados",
-        "PEOPLE_VACCINATED": "Pessoas Vacinadas",
-        "POPULATION": "População Total"
-    }
-    selected_metric = st.selectbox(
-        "Selecione a Métrica para o Eixo Y:",
-        options=list(metrics_map.keys()),
-        format_func=lambda x: metrics_map[x]
-    )
-    
-    df_owid_filtered = df_owid[df_owid['LOCATION'].isin(selected_locations)]
-    
-    if not df_owid_filtered.empty:
-        # Gráfico temporal
+    with row1_col1:
+        st.subheader("📈 1. Evolução de Novos Casos por País (Linha)")
+        # Linha — Evolução de casos novos por país
         fig_line = px.line(
-            df_owid_filtered,
+            df_filtered,
             x='DATE',
-            y=selected_metric,
+            y='NEW_CASES',
             color='LOCATION',
-            title=f"Evolução Temporal: {metrics_map[selected_metric]}",
-            labels={'DATE': 'Data', selected_metric: metrics_map[selected_metric], 'LOCATION': 'País'},
+            title="Evolução Temporal Diária de Novos Casos",
+            labels={'DATE': 'Data', 'NEW_CASES': 'Novos Casos Diários', 'LOCATION': 'País'},
             template='plotly_white'
         )
         st.plotly_chart(fig_line, use_container_width=True)
         
-        # Seção de KPIs Comparativos de Acordo com a Seleção de Países
-        st.markdown("---")
-        st.subheader("🎯 Resumo de Estatísticas Máximas no Período (2020-2023)")
+    with row1_col2:
+        st.subheader("💀 2. Total de Óbitos por País (Barras)")
+        # Barras — Total de óbitos por país
+        # Usamos df_kpis para pegar o máximo cumulativo do período por país
+        fig_bar = px.bar(
+            df_kpis,
+            x='LOCATION',
+            y='TOTAL_DEATHS',
+            color='LOCATION',
+            title="Total Acumulado de Óbitos no Período",
+            labels={'LOCATION': 'País', 'TOTAL_DEATHS': 'Óbitos Confirmados'},
+            text_auto='.3s',
+            template='plotly_white'
+        )
+        fig_bar.update_layout(xaxis={'categoryorder':'total descending'})
+        st.plotly_chart(fig_bar, use_container_width=True)
         
-        kpi_cols = st.columns(len(selected_locations) if len(selected_locations) > 0 else 1)
-        for i, loc in enumerate(selected_locations):
-            loc_data = df_owid_filtered[df_owid_filtered['LOCATION'] == loc]
-            max_cases_day = loc_data['NEW_CASES'].max()
-            max_deaths = loc_data['TOTAL_DEATHS'].max()
-            max_vacc = loc_data['PEOPLE_VACCINATED'].max()
-            
-            with kpi_cols[i]:
-                st.markdown(f"#### 📍 {loc}")
-                st.metric("Pico de Casos Diários", f"{max_cases_day:,.0f}" if pd.notna(max_cases_day) else "N/A")
-                st.metric("Total de Óbitos", f"{max_deaths:,.0f}" if pd.notna(max_deaths) else "N/A")
-                st.metric("Máx. Vacinados", f"{max_vacc:,.0f}" if pd.notna(max_vacc) else "N/A")
-    else:
-        st.warning("Selecione pelo menos um país para visualizar as métricas e o gráfico histórico.")
+    # Segunda linha de gráficos
+    row2_col1, row2_col2 = st.columns(2)
+    
+    with row2_col1:
+        st.subheader("💉 3. Proporção de Vacinados - 1 dose (Pizza)")
+        # Pizza — Proporção de vacinados (1 dose)
+        fig_pie = px.pie(
+            df_kpis,
+            values='PEOPLE_VACCINATED',
+            names='LOCATION',
+            title="Distribuição Relativa de Pessoas Vacinadas",
+            color_discrete_sequence=px.colors.qualitative.Set3
+        )
+        st.plotly_chart(fig_pie, use_container_width=True)
+        
+    with row2_col2:
+        st.subheader("🎯 4. Relação População × Total de Casos (Dispersão)")
+        # Dispersão — População × Total de casos
+        # Adicionar população máxima no agrupamento para o dispersão
+        df_scatter = df_filtered.groupby('LOCATION').agg({
+            'POPULATION': 'max',
+            'TOTAL_CASES': 'max'
+        }).reset_index()
+        
+        fig_scatter = px.scatter(
+            df_scatter,
+            x='POPULATION',
+            y='TOTAL_CASES',
+            size='TOTAL_CASES',
+            color='LOCATION',
+            hover_name='LOCATION',
+            title="Correlação: População Total vs Casos Totais",
+            labels={'POPULATION': 'População Total', 'TOTAL_CASES': 'Casos Acumulados'},
+            size_max=40,
+            template='plotly_white'
+        )
+        st.plotly_chart(fig_scatter, use_container_width=True)
 
 # ----------------------------------------------------------------------------
-# TAB 2: VISUALIZADOR SNOWFLAKE
+# TAB 2: DADOS BRUTOS COM EXPORTAÇÃO CSV OBRIGATÓRIA
 # ----------------------------------------------------------------------------
-with tab_explorer:
-    st.header("❄️ Visualizador de Registros Físicos do Snowflake")
-    st.markdown("Exibição direta e paginação rápida dos registros reais armazenados na tabela `COVID19_OWID_SNOWFLAKE` no Snowflake.")
+with tab_raw_data:
+    st.header("📂 Dados Brutos da Tabela Snowflake")
+    st.markdown("Exibição tabular e filtros detalhados dos registros consultados dinamicamente.")
     
-    rows_limit = st.slider("Limite de Linhas a Buscar:", min_value=5, max_value=500, value=50, step=5)
+    st.write(f"Exibindo dados filtrados: **{len(df_filtered):,} registros** encontrados.")
+    st.dataframe(df_filtered, use_container_width=True)
     
-    with st.spinner("Buscando registros no Snowflake..."):
-        df_preview = run_query_from_db(f"SELECT * FROM COVID19_OWID_SNOWFLAKE LIMIT {rows_limit}")
-        
-    st.success(f"✅ {len(df_preview)} linhas carregadas diretamente da tabela `COVID19_OWID_SNOWFLAKE`.")
-    st.dataframe(df_preview, use_container_width=True)
-    
-    # Download Button
-    csv_data = df_preview.to_csv(index=False).encode('utf-8')
+    # Botão de exportação obrigatório
+    csv_bytes = df_filtered.to_csv(index=False).encode('utf-8')
     st.download_button(
-        label="💾 Baixar registros exibidos em CSV",
-        data=csv_data,
-        file_name="snowflake_owid_preview.csv",
-        mime="text/csv"
+        label="💾 Baixar Dados Filtrados (CSV)",
+        data=csv_bytes,
+        file_name="covid19_owid_filtered.csv",
+        mime="text/csv",
+        use_container_width=False
     )
-
-# ----------------------------------------------------------------------------
-# TAB 3: SQL PLAYGROUND
-# ----------------------------------------------------------------------------
-with tab_playground:
-    st.header("💻 SQL Playground")
-    st.markdown("Escreva queries SQL ANSI personalizadas e execute-as diretamente na tabela `COVID19_OWID_SNOWFLAKE` no Snowflake!")
-    
-    exemplo_query = """-- Query exemplo: Total de obitos acumulados e taxa de obitos por 100 mil habitantes
-SELECT 
-    LOCATION,
-    MAX(TOTAL_DEATHS) as TOTAL_OBITOS,
-    MAX(POPULATION) as POPULACAO_TOTAL,
-    ROUND((MAX(TOTAL_DEATHS)/MAX(POPULATION))*100000, 2) as OBITOS_POR_100K_HAB
-FROM COVID19_OWID_SNOWFLAKE
-GROUP BY LOCATION
-ORDER BY OBITOS_POR_100K_HAB DESC;"""
-
-    user_query = st.text_area(
-        "Sua Query SQL:",
-        value=exemplo_query,
-        height=200
-    )
-    
-    if st.button("⚡ Executar Query no Snowflake", use_container_width=True):
-        if user_query.strip() != "":
-            with st.spinner("Enviando query ao Snowflake..."):
-                try:
-                    df_custom = run_query_from_db(user_query)
-                    st.success("✅ Query executada com sucesso!")
-                    st.dataframe(df_custom, use_container_width=True)
-                except Exception as e:
-                    st.error(f"❌ Erro de Sintaxe ou Execução SQL: {str(e)}")
-        else:
-            st.warning("Por favor, digite uma query SQL válida antes de executar.")
